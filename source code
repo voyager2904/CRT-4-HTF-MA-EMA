@@ -1,0 +1,168 @@
+//@version=6
+indicator(title = "CRT Sweep Signal v14", shorttitle = "CRT v14", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+grp1 = "CRT Settings"
+i_atr      = input.float(1.2,  "C1 min size x ATR",       minval=0.1, step=0.1, group=grp1)
+i_lookback = input.int(15,     "Lookback bars for C1",     minval=2,   maxval=30, group=grp1)
+i_cooldown = input.int(4,      "Min bars between signals", minval=1,   maxval=30, group=grp1)
+i_strict   = input.bool(false, "Strict inside check",      group=grp1)
+
+grp2 = "Visuals"
+i_show_box   = input.bool(false, "Show C1 zone box",          group=grp2, tooltip="OFF keeps chart clean — turn ON to inspect individual setups")
+i_show_label = input.bool(false, "Show price labels",          group=grp2, tooltip="OFF = arrows only, cleanest chart")
+i_label_dist = input.int(5,      "Label distance (bars)",      group=grp2, minval=1, maxval=20)
+i_bull       = input.color(color.new(#00e676, 0), "Bull colour", group=grp2)
+i_bear       = input.color(color.new(#ff1744, 0), "Bear colour", group=grp2)
+i_c1         = input.color(color.new(#2962ff, 0), "C1 colour",   group=grp2)
+
+grp3 = "Moving Averages"
+i_show_20  = input.bool(true, "Show 20 EMA",  group=grp3)
+i_show_50  = input.bool(true, "Show 50 EMA",  group=grp3)
+i_show_200 = input.bool(true, "Show 200 EMA", group=grp3)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOVING AVERAGES
+// ─────────────────────────────────────────────────────────────────────────────
+
+ema20  = ta.ema(close, 20)
+ema50  = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+
+plot(i_show_20  ? ema20  : na, "20 EMA",  color=color.new(#00bcd4, 20), linewidth=1)
+plot(i_show_50  ? ema50  : na, "50 EMA",  color=color.new(#ff9800, 20), linewidth=2)
+plot(i_show_200 ? ema200 : na, "200 EMA", color=color.new(#ce93d8, 20), linewidth=3)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRT DETECTION
+// ─────────────────────────────────────────────────────────────────────────────
+
+atr = ta.atr(14)
+
+find_c1_high() =>
+    result = float(na)
+    for i = 1 to i_lookback
+        if (high[i] - low[i]) >= i_atr * atr[i]
+            result := high[i]
+            break
+    result
+
+find_c1_low() =>
+    result = float(na)
+    for i = 1 to i_lookback
+        if (high[i] - low[i]) >= i_atr * atr[i]
+            result := low[i]
+            break
+    result
+
+find_c1_age() =>
+    result = int(na)
+    for i = 1 to i_lookback
+        if (high[i] - low[i]) >= i_atr * atr[i]
+            result := i
+            break
+    result
+
+c1hi  = find_c1_high()
+c1lo  = find_c1_low()
+c1age = find_c1_age()
+
+all_inside() =>
+    ok = true
+    if na(c1age)
+        ok := false
+    else
+        for i = 1 to c1age - 1
+            if high[i] > c1hi or low[i] < c1lo
+                ok := false
+                break
+    ok
+
+inside_ok = i_strict ? all_inside() : not na(c1age)
+
+bear_raw = not na(c1hi) and inside_ok and (high > c1hi or open > c1hi) and close < c1hi
+bull_raw = not na(c1lo) and inside_ok and (low  < c1lo or open < c1lo) and close > c1lo
+
+var int bars_since = 999
+bars_since += 1
+
+bullish_sweep = bull_raw and bars_since >= i_cooldown
+bearish_sweep = bear_raw and bars_since >= i_cooldown
+
+if bullish_sweep or bearish_sweep
+    bars_since := 0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VISUALS
+// ─────────────────────────────────────────────────────────────────────────────
+
+var box bx = na
+if i_show_box and (bullish_sweep or bearish_sweep) and not na(c1age)
+    bx := box.new(bar_index - c1age, c1hi, bar_index, c1lo,
+         bgcolor=color.new(i_c1, 93), border_color=color.new(i_c1, 55),
+         border_width=1, border_style=line.style_dashed)
+
+plotshape(bullish_sweep,
+     title    = "Bull sweep",
+     style    = shape.triangleup,
+     location = location.belowbar,
+     color    = i_bull,
+     size     = size.small)
+
+plotshape(bearish_sweep,
+     title    = "Bear sweep",
+     style    = shape.triangledown,
+     location = location.abovebar,
+     color    = i_bear,
+     size     = size.small)
+
+if i_show_label and bullish_sweep
+    label_x = bar_index + i_label_dist
+    label_y = low - atr * 2.0
+    line.new(bar_index, low, label_x, label_y,
+         color=color.new(i_bull, 50), width=1, style=line.style_solid)
+    label.new(label_x, label_y,
+         text="BUY " + str.tostring(c1lo, "#.##"),
+         color=color.new(i_bull, 10), textcolor=color.black,
+         style=label.style_label_upper_left, size=size.small)
+
+if i_show_label and bearish_sweep
+    label_x = bar_index + i_label_dist
+    label_y = high + atr * 2.0
+    line.new(bar_index, high, label_x, label_y,
+         color=color.new(i_bear, 50), width=1, style=line.style_solid)
+    label.new(label_x, label_y,
+         text="SELL " + str.tostring(c1hi, "#.##"),
+         color=color.new(i_bear, 10), textcolor=color.white,
+         style=label.style_label_lower_left, size=size.small)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TABLE
+// ─────────────────────────────────────────────────────────────────────────────
+
+var table t = table.new(position.top_right, 2, 6,
+     bgcolor=color.new(color.black, 55), border_color=color.new(color.gray, 65), border_width=1)
+
+if barstate.islast
+    table.cell(t, 0, 0, "CRT v14",        text_color=color.white,  text_size=size.normal, bgcolor=color.new(color.black, 35))
+    table.cell(t, 1, 0, syminfo.ticker,    text_color=color.yellow, text_size=size.normal, bgcolor=color.new(color.black, 35))
+    table.cell(t, 0, 1, "TF",             text_color=color.silver, text_size=size.small)
+    table.cell(t, 1, 1, timeframe.period,  text_color=color.white,  text_size=size.small)
+    table.cell(t, 0, 2, "50 EMA",          text_color=color.silver, text_size=size.small)
+    table.cell(t, 1, 2, close > ema50  ? "ABOVE" : "BELOW", text_color=close > ema50  ? color.lime : color.red, text_size=size.small)
+    table.cell(t, 0, 3, "200 EMA",         text_color=color.silver, text_size=size.small)
+    table.cell(t, 1, 3, close > ema200 ? "ABOVE" : "BELOW", text_color=close > ema200 ? color.lime : color.red, text_size=size.small)
+    table.cell(t, 0, 4, "C1 high",         text_color=color.silver, text_size=size.small)
+    table.cell(t, 1, 4, not na(c1hi) ? str.tostring(c1hi, "#.##") : "-", text_color=color.lime, text_size=size.small)
+    table.cell(t, 0, 5, "C1 low",          text_color=color.silver, text_size=size.small)
+    table.cell(t, 1, 5, not na(c1lo) ? str.tostring(c1lo, "#.##") : "-", text_color=color.red,  text_size=size.small)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+alertcondition(bullish_sweep, "CRT Bull Sweep", "CRT BUY {{ticker}} {{interval}} close:{{close}} time:{{time}}")
+alertcondition(bearish_sweep, "CRT Bear Sweep", "CRT SELL {{ticker}} {{interval}} close:{{close}} time:{{time}}")
